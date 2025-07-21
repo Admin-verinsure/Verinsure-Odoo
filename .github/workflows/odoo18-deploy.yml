@@ -1,0 +1,47 @@
+name: Verinsure Odoo18 CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v3
+
+    - name: 🗝️ Set environment variables
+      run: |
+        echo "SSH_USER=${{ secrets.VERINSURE_SSH_USER }}" >> $GITHUB_ENV
+        echo "SERVER_IP=${{ secrets.VERINSURE_SERVER_IP }}" >> $GITHUB_ENV
+        echo "${{ secrets.SSH_PRIVATE_KEY_VERINSURE }}" > private_key
+        chmod 600 private_key
+
+    - name: 🔐 Setup SSH Agent
+      run: |
+        eval "$(ssh-agent -s)"
+        ssh-add private_key
+        mkdir -p ~/.ssh
+        ssh-keyscan -H "$SERVER_IP" >> ~/.ssh/known_hosts
+
+    - name: 📦 Install Python packages on remote
+      run: |
+        ssh -i private_key -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP << 'EOF'
+          python3 -m venv /home/$USER/venv
+          source /home/$USER/venv/bin/activate
+          pip install --upgrade pip
+          pip install openpyxl qifparse pyfcm httpagentparser dropbox pyncclient nextcloud-api-wrapper boto3 paramiko
+        EOF
+
+    - name: 🚚 Deploy modules to Verinsure
+      run: |
+        MODULE_PATH="/opt/odoo18/odoo18-addons/"
+        scp -i private_key -o StrictHostKeyChecking=no -r ./addons/* $SSH_USER@$SERVER_IP:$MODULE_PATH
+
+    - name: 🔁 Restart Odoo
+      run: |
+        ssh -i private_key -o StrictHostKeyChecking=no $SSH_USER@$SERVER_IP "echo '${{ secrets.SUDO_PASSWORD_VERINSURE }}' | sudo -S systemctl restart odoo18"
